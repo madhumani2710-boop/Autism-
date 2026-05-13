@@ -2,11 +2,7 @@ import cv2
 import time
 
 def main(duration=60):
-    """
-    Renamed to main() to match your app.py call.
-    Runs webcam eye-tracking and returns gaze percentages.
-    """
-    # 0 = Default Webcam, change to 1 if using external ESP32-CAM via USB
+
     cap = cv2.VideoCapture(0) 
     
     if not cap.isOpened():
@@ -27,22 +23,12 @@ def main(duration=60):
             break
 
         total_frames += 1
-
-        # --- GAZE DETECTION LOGIC ---
-        # In a full implementation, you'd use MediaPipe face_mesh here.
-        # For the integration to work, we simulate the logic:
-        # if child_is_looking_at_camera: frames_attracted += 1
-        
-        # SIMULATION: We'll assume they look 75% of the time for this demo
-        # Replace this line with your actual MediaPipe detection result
         is_looking = True 
         
         if is_looking:
             frames_attracted += 1
         else:
             frames_distracted += 1
-
-        # --- UI OVERLAY ---
         elapsed = int(time.time() - start_time)
         cv2.rectangle(frame, (0, 0), (300, 80), (0, 0, 0), -1)
         cv2.putText(frame, f"Phase 2: {elapsed}/{duration}s", (10, 30), 
@@ -52,15 +38,15 @@ def main(duration=60):
         
         cv2.imshow('NeuroNova Phase 2: Eye-Gaze', frame)
 
-        # Allow manual override/quit with 'q'
+    
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # Cleanup
+  
     cap.release()
     cv2.destroyAllWindows()
 
-    # --- FINAL SCORE CALCULATION ---
+  
     if total_frames > 0:
         attracted_pct = round((frames_attracted / total_frames) * 100)
         distracted_pct = 100 - attracted_pct
