@@ -1,40 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║        AUTISM INTERACTION TOY — INTERACTIVE BRANCHING VERSION               ║
-║                           *** FIXED VERSION ***                             ║
-║                                                                              ║
-║  FIXES APPLIED:                                                              ║
-║    FIX 1  — Audio 001 + 009 overlap: increased greeting gap to 1.2s,       ║
-║             added 0.3s post-buffer drain inside AudioEngine.play()          ║
-║    FIX 2a — Negative resp_secs from audio bleed: max(0.0, onset-audio_end) ║
-║             + excluded zero (audio bleed) from FAST detection               ║
-║    FIX 2b — STT result used before Google API returns: added stt_deadline   ║
-║             wait loop (LISTEN_SECS + 3.5s) after countdown                 ║
-║    FIX 2c — Keyword score binary 60/0: now scales with word count          ║
-║    FIX 3a — Race condition on all_eye/hand/rep: snapshot lists before       ║
-║             state change to S_REACT                                         ║
-║    FIX 3b — gaze_score = eye*0.9 meaningless: now uses temporal std-dev    ║
-║             to measure gaze consistency                                     ║
-║    FIX 3c — Lists cleared after first MediaPipe frame: clear happens        ║
-║             atomically before transitioning to S_LISTEN                     ║
-║                                                                              ║
-║  Audio Flow:                                                                 ║
-║    001 (Greeting) → 009 → 010 → 011 → 013 → 015 → 016                      ║
-║    After EVERY question:                                                     ║
-║      Fast response (<=3s) → 004.wav (praise)   → next question              ║
-║      Slow/No response     → 003.wav (encourage) → next question             ║
-║                                                                              ║
-║  Hardware REQUIRED:                                                          ║
-║    • ESP32-CAM  → WiFi MJPEG stream  (set ESP32_CAM_URL)                    ║
-║    • ESP32 + MAX4466 → USB Serial    (set SERIAL_PORT)                      ║
-║                                                                              ║
-║  NO WEBCAM FALLBACK — hardware must be connected before running             ║
-║                                                                              ║
-║  pip install opencv-python mediapipe numpy pygame pyserial                  ║
-║             SpeechRecognition pyaudio requests                               ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-"""
-
 import cv2
 import numpy as np
 import time
@@ -83,18 +46,14 @@ except ImportError:
     REQUESTS_AVAILABLE = False
     print("[WARN] requests not found -> pip install requests")
 
-
-# ===============================================================================
-# USER CONFIGURATION  — CHANGE THESE BEFORE RUNNING
-# ===============================================================================
 CHILD_NAME       = "friend"
 AUDIO_FOLDER     = "audio_files"
 LISTEN_SECS      = 10
 FAST_THRESHOLD   = 3.0
 REPORT_FOLDER    = "reports"
 
-ESP32_CAM_URL    = "http://192.168.137.58/stream"   # <- your ESP32-CAM IP
-SERIAL_PORT      = "COM6"                             # <- your COM port
+ESP32_CAM_URL    = "http://192.168.137.58/stream"   
+SERIAL_PORT      = "COM6"                            
 SERIAL_BAUD      = 115200
 
 AUDIO_GREETING   = "001"
@@ -104,9 +63,6 @@ AUDIO_ENCOURAGE  = "003"
 # Fixed order: 9 -> 10 -> 11 -> 13 -> 15 -> 16
 QUESTION_ORDER   = ["009", "010", "011", "013", "015", "016"]
 
-# ===============================================================================
-# COLORS
-# ===============================================================================
 C = {
     "bg":      (15,  15,  25),
     "panel":   (25,  28,  45),
@@ -122,9 +78,6 @@ C = {
     "error":   (0,   0,  200),
 }
 
-# ===============================================================================
-# DATA CLASSES
-# ===============================================================================
 @dataclass
 class QuestionScore:
     q_index:            int   = 0
@@ -170,10 +123,6 @@ class SmoothWindow:
     def mean(self) -> float:
         return sum(self._buf) / max(len(self._buf), 1)
 
-
-# ===============================================================================
-# AUDIO ENGINE
-# ===============================================================================
 class AudioEngine:
     def __init__(self):
         pygame.mixer.init()
@@ -188,17 +137,10 @@ class AudioEngine:
         pygame.mixer.music.play()
         while pygame.mixer.music.get_busy():
             time.sleep(0.05)
-        # ── FIX 1: drain audio output buffer before returning ─────────────
-        # Without this, the next pygame.mixer.music.load() call collides with
-        # the still-flushing hardware audio buffer, causing 001.wav + 009.wav
-        # to both be audible at the same time.
+
         time.sleep(0.3)
         return True
 
-
-# ===============================================================================
-# ESP32-CAM STREAM  — strict, NO fallback to webcam
-# ===============================================================================
 class ESP32CamCapture:
     def __init__(self, url):
         self.url       = url
@@ -267,10 +209,6 @@ class ESP32CamCapture:
                     print(f"[Camera] Lost: {ex} -- reconnecting...")
                     time.sleep(2)
 
-
-# ===============================================================================
-# SERIAL MIC  — strict, NO fallback
-# ===============================================================================
 class SerialMicReader:
     SILENCE     = 2048
     NOISE_FLOOR = 150
@@ -343,10 +281,6 @@ class SerialMicReader:
             "active": max(vals) > self.NOISE_FLOOR,
         }
 
-
-# ===============================================================================
-# HARDWARE ERROR SCREEN
-# ===============================================================================
 def show_hardware_error(errors: list):
     w, h = 820, 500
     while True:
@@ -385,10 +319,6 @@ def show_hardware_error(errors: list):
     cv2.destroyAllWindows()
     sys.exit(1)
 
-
-# ===============================================================================
-# SPEECH-TO-TEXT
-# ===============================================================================
 class SpeechEngine:
     def __init__(self):
         self.rec = self.mic = None
@@ -415,10 +345,6 @@ class SpeechEngine:
         except:
             return None
 
-
-# ===============================================================================
-# POSE / GAZE / HAND ANALYZER
-# ===============================================================================
 class PoseGazeAnalyzer:
     def __init__(self):
         if not MP_AVAILABLE:
@@ -511,25 +437,14 @@ class PoseGazeAnalyzer:
                     mp_draw.DrawingSpec(color=(0,200,200), thickness=1))
         return frame
 
-
-# ===============================================================================
-# SCORING ENGINE
-# ===============================================================================
 class ScoringEngine:
     def compute(self, text, amp) -> dict:
-        # Clarity: stable amplitude = clean voice signal
         clarity = 0.0
         if amp["mean"] > 0:
             clarity = (1 - min(1, amp["std"] / (amp["mean"] + 1e-6))) * 100
-
-        # Tone: based on amplitude standard deviation range
         std  = amp["std"]
         tone = 40.0 if std < 50 else (80.0 if std < 200 else 55.0)
 
-        # ── FIX 2c: Keyword score scales with number of spoken words ──────
-        # OLD: binary 60 (any text) or 0 (no text) — no partial credit
-        # NEW: 0 for no speech, 40 base + 6 per word, capped at 100
-        #      Rewards longer, more complete verbal responses proportionally.
         if text and len(text.strip()) > 0:
             words = text.strip().split()
             kw = min(100.0, 40.0 + len(words) * 6.0)
@@ -542,10 +457,6 @@ class ScoringEngine:
             "keyword_score": round(kw,      1),
         }
 
-
-# ===============================================================================
-# REPORT WRITER
-# ===============================================================================
 class ReportWriter:
     def __init__(self):
         os.makedirs(REPORT_FOLDER, exist_ok=True)
@@ -564,10 +475,6 @@ class ReportWriter:
                     w.writerow(vars(s))
         print(f"[Report] Saved: {base}.json + .csv")
 
-
-# ===============================================================================
-# MAIN APPLICATION
-# ===============================================================================
 class AutismToyApp:
 
     S_INTRO   = "INTRO"
@@ -641,22 +548,14 @@ class AutismToyApp:
             for k, v in kw.items():
                 setattr(self, k, v)
 
-    # ===========================================================================
-    # SESSION THREAD
-    # ===========================================================================
     def _session(self):
-        # ── Step 1: Greeting ─────────────────────────────────────────────
+        # ── Step 1: Greeting 
         self._set(state=self.S_PLAYING,
                   current_q_name=AUDIO_GREETING,
                   current_q_num=0,
                   reactive_label="")
         self.audio.play(AUDIO_GREETING)
 
-        # ── FIX 1: increased gap 0.4s -> 1.2s after greeting ─────────────
-        # Original 0.4s was not enough: the OS audio pipeline hadn't fully
-        # flushed 001.wav when 009.wav began loading, causing both audios
-        # to play at the same time. Combined with AudioEngine.play()'s new
-        # 0.3s buffer, total separation is 1.5s — overlap eliminated.
         time.sleep(1.2)
 
         # ── Step 2: Questions 009 -> 010 -> 011 -> 013 -> 015 -> 016 ─────
@@ -669,21 +568,15 @@ class AutismToyApp:
                       live_text="",
                       reactive_label="")
             self.audio.play(q_audio)
-            audio_end = time.time()   # timestamp: question audio finished
-            self.mic.reset()          # clear any mic onset from question audio
+            audio_end = time.time()   
+            self.mic.reset()         
 
-            # ── FIX 3c: clear gesture lists atomically WITH state transition
-            # Original code set state=S_LISTEN first, then cleared the lists
-            # in a separate lock block. The main loop could append a MediaPipe
-            # frame in the gap between those two operations, which then got
-            # wiped. Now both operations happen inside a single lock acquisition.
             with self.lock:
                 self.all_eye.clear()
                 self.all_hand.clear()
                 self.all_rep.clear()
-                self.state = self.S_LISTEN   # atomic with clear
+                self.state = self.S_LISTEN   
 
-            # --- STT runs in background during countdown ---
             recognized = [None]
             stt_done   = threading.Event()
 
@@ -702,39 +595,23 @@ class AutismToyApp:
                 time.sleep(1)
             self.countdown = 0
 
-            # ── FIX 2b: wait for STT Google API call to complete ──────────
-            # The countdown and speech.listen() run in parallel. After the
-            # countdown finishes, recognize_google() may still be making a
-            # network round-trip (1-3s). Without this wait, recognized[0]
-            # was always None at score time even when the child had spoken.
-            # We grant up to 3.5 extra seconds for the API response.
+        
             STT_API_GRACE = 3.5
             stt_done.wait(timeout=STT_API_GRACE)
 
-            # ── FIX 3a: snapshot gesture data before any state change ─────
-            # Original code read self.all_eye/hand/rep AFTER changing state
-            # to S_REACT. In the tiny window between state change and read,
-            # the main loop could still be appending or lists could be stale.
-            # Snapshot here while still in S_LISTEN for a clean, stable copy.
             with self.lock:
                 snap_eye  = list(self.all_eye)
                 snap_hand = list(self.all_hand)
                 snap_rep  = list(self.all_rep)
 
-            # --- Decide FAST or SLOW ---
+          
             onset = self.mic.onset_time()
 
-            # ── FIX 2a: clamp resp_secs to 0.0 and exclude bleed ─────────
-            # If question audio triggered the mic's NOISE_FLOOR (150) and
-            # reset() hadn't run yet, onset could be BEFORE audio_end,
-            # giving negative resp_secs -> every response was "FAST".
-            # max(0.0, ...) clamps it; excluding 0.0 filters out bleed.
             if onset:
                 resp_secs = max(0.0, onset - audio_end)
             else:
                 resp_secs = float(LISTEN_SECS)
 
-            # 0.0 = onset during/before audio = audio bleed, not a real response
             is_fast = 0.0 < resp_secs <= FAST_THRESHOLD
 
             react_audio = AUDIO_PRAISE    if is_fast else AUDIO_ENCOURAGE
@@ -748,25 +625,16 @@ class AutismToyApp:
 
             print(f"[Q{q_num}] {q_audio}.wav  ->  {react_label}  ->  playing {react_audio}.wav")
 
-            # --- Play praise / encourage ---
             self.audio.play(react_audio)
 
-            # --- Score this question ---
             self._set(state=self.S_SCORING)
             amp = self.mic.stats()
             vs  = self.scorer.compute(recognized[0], amp)
 
-            # Use snapshotted gesture data (FIX 3a)
             avg_eye  = sum(snap_eye)  / max(len(snap_eye),  1)
             avg_hand = sum(snap_hand) / max(len(snap_hand), 1)
             avg_rep  = sum(snap_rep)  / max(len(snap_rep),  1)
 
-            # ── FIX 3b: gaze_score = temporal consistency, not eye * 0.9 ──
-            # Original: gaze_score = avg_eye * 0.9 — a near-duplicate of
-            # eye_contact_score, adding no new information and inflating
-            # the overall score. New formula: mean eye contact minus half
-            # the standard deviation across the listen window. High std-dev
-            # = child looked away repeatedly = lower sustained gaze score.
             if len(snap_eye) > 1:
                 mean_e = avg_eye
                 std_e  = math.sqrt(
@@ -801,14 +669,10 @@ class AutismToyApp:
                   f"STT:'{qs.voice_text[:20]}'")
             time.sleep(0.3)
 
-        # ── Step 3: Session complete ──────────────────────────────────────
         self.report.save(self.q_scores)
         self._set(state=self.S_RESULTS)
         self._print_report()
 
-    # ===========================================================================
-    # UI HELPERS
-    # ===========================================================================
     def _panel(self, img, x1,y1,x2,y2, alpha=0.78):
         sub = img[y1:y2,x1:x2]
         cv2.addWeighted(np.full_like(sub,C["panel"]),alpha,sub,1-alpha,0,sub)
@@ -831,9 +695,6 @@ class AutismToyApp:
     def _sc(self, s):
         return C["success"] if s>=70 else (C["warn"] if s>=40 else C["danger"])
 
-    # ===========================================================================
-    # SCREENS
-    # ===========================================================================
     def _draw_intro(self, f):
         h,w = f.shape[:2]
         cv2.addWeighted(np.full_like(f,18),0.55,f,0.45,0,f)
@@ -1007,10 +868,6 @@ class AutismToyApp:
 
         self._txt(f,"[R] New Session   [Q] Quit",
                   (w//2-148,h-28),scale=0.62,color=C["muted"])
-
-    # ===========================================================================
-    # MAIN LOOP
-    # ===========================================================================
     def run(self):
         started = False
         while True:
@@ -1110,10 +967,6 @@ class AutismToyApp:
             "status": "Test Complete"
         }
 
-
-# ===============================================================================
-# RUN
-# ===============================================================================
 if __name__ == "__main__":
     app = AutismToyApp()
     app.run()
