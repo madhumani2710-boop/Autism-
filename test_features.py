@@ -1,10 +1,3 @@
-"""
-Eye Tracking & Gaze Detection — ESP32-CAM Edition
-==================================================
-Updated for NeuroNova Dashboard Integration
-Returns JSON-ready dictionary for Flask/Web use.
-"""
-
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -15,20 +8,15 @@ import threading
 from collections import deque
 from scipy.spatial import distance as dist
 
-# ============================================================
-# 🔥 CHANGE THIS TO YOUR ESP32-CAM IP ADDRESS
-# ============================================================
 ESP32_IP         = "192.168.137.219"
 ESP32_STREAM_URL = f"http://{ESP32_IP}/stream"
-# ============================================================
 
 WINDOW_NAME     = "Eye Tracking | ESP32-CAM"
 CSV_OUTPUT      = "attention_dataset.csv"
 
-SESSION_SECS    = 60      # 1 minute session
-CAL_SECS        = 5       # calibration duration
+SESSION_SECS    = 60     
+CAL_SECS        = 5       
 
-# ── Thresholds (slightly tuned, overridden after calibration) ──
 EAR_BLINK_RATIO = 0.72
 EAR_OPEN_BASE   = 0.30
 EAR_CONSEC      = 3
@@ -53,12 +41,10 @@ EMA_ALPHA       = 0.06
 SIG_MED         = 20
 NOFACE_LIMIT    = 45
 
-# ── Phases ────────────────────────────────────────────────────
 PHASE_WAIT    = "WAITING"
 PHASE_CAL     = "CALIBRATING"
 PHASE_SESSION = "SESSION"
 PHASE_DONE    = "DONE"
-
 
 mp_face_mesh = mp.solutions.face_mesh
 mp_draw      = mp.solutions.drawing_utils
@@ -110,10 +96,10 @@ class ESP32Stream:
         print("[INFO] Waiting for first frame (up to 8s)...")
         for _ in range(80):
             if self.grabbed:
-                print(f"[INFO] ✅ First frame OK! Window opening...\n")
+                print(f"[INFO]  First frame OK! Window opening...\n")
                 return
             time.sleep(0.1)
-        print("[WARN] ⚠️  Still no frame. Check URL or stream format.")
+        print("[WARN]   Still no frame. Check URL or stream format.")
 
     def _reader(self):
         buf = bytes()
@@ -157,7 +143,6 @@ class ESP32Stream:
             self._response.close()
         except Exception:
             pass
-
 
 def calc_ear(lms, idx, w, h):
     pts = np.array([(lms[i].x * w, lms[i].y * h) for i in idx])
@@ -257,14 +242,10 @@ class Calibration:
 
 def print_result(att_pct, dis_pct, err_pct, total_blinks):
     print("\n" + "="*50)
-    print(f"✅ Attentive: {att_pct:.1f}% | 🔴 Distracted: {dis_pct:.1f}%")
+    print(f" Attentive: {att_pct:.1f}% |  Distracted: {dis_pct:.1f}%")
     print(f"Total Blinks: {total_blinks}")
     print("="*50 + "\n")
 
-
-# ─────────────────────────────────────────────────────────────
-# MAIN — Updated to return data to NeuroNova Backend
-# ─────────────────────────────────────────────────────────────
 def main():
     cap = None
     try:
@@ -375,13 +356,11 @@ def main():
         elif key == ord(' ') and phase == PHASE_WAIT:
             if results.multi_face_landmarks: phase, cal_start = PHASE_CAL, time.time()
 
-    # ── Final Cleanup and Data Return ──
     if cap: cap.release()
     mesh.close()
     csv_file.close()
     cv2.destroyAllWindows()
     
-    # CALCULATE FINAL DATA FOR RETURN
     tf = max(total_frames, 1)
     return {
         "attracted": round(100 * att_frames / tf, 2),
